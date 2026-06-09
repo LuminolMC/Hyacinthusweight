@@ -22,14 +22,11 @@
 
 package io.papermc.paperweight.core.tasks
 
-import io.papermc.paperweight.tasks.BaseTask
-import io.papermc.paperweight.util.constants.PAPERWEIGHT_DEBUG
-import io.papermc.paperweight.util.constants.UPSTREAM_WORK_DIR_PROPERTY
-import io.papermc.paperweight.util.path
-import io.papermc.paperweight.util.upstreamsDirectory
-import kotlin.collections.set
-import kotlin.io.path.absolutePathString
+import io.papermc.paperweight.tasks.*
+import io.papermc.paperweight.util.*
+import io.papermc.paperweight.util.constants.*
 import java.io.File
+import kotlin.io.path.*
 import org.gradle.StartParameter
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.internal.StartParameterInternal
@@ -73,11 +70,11 @@ abstract class RunNestedBuild : BaseTask() {
 
         try {
             runTask(params)
-        } catch (_: NoSuchMethodException) {
+        } catch (_: Exception) {
             try {
                 params.projectDir?.let { modifyDownstreamSettings(it) }
-            } catch (e: Exception) {
-                logger.warn("Failed to modify downstream settings: ${e.message}")
+            } catch (modifyException: Exception) {
+                logger.warn("Failed to modify downstream build.gradle.kts: ${modifyException.message}")
             }
             runTask(params)
         }
@@ -102,7 +99,7 @@ abstract class RunNestedBuild : BaseTask() {
         var content = buildFile.readText()
 
         val currentVersion = project.version.toString()
-        
+
         val oldPatcherPluginId = """id\(["']io\.papermc\.paperweight\.patcher["']\)\s+version\s+["'][^"']+["']"""
         val newPatcherPluginId = """id("moe.luminolmc.hyacinthusweight.patcher") version "$currentVersion""""
 
@@ -110,7 +107,7 @@ abstract class RunNestedBuild : BaseTask() {
         val newCorePluginId = """id("moe.luminolmc.hyacinthusweight.core") version "$currentVersion""""
 
         var modified = false
-        
+
         if (content.contains(Regex(oldPatcherPluginId))) {
             content = content.replace(Regex(oldPatcherPluginId), newPatcherPluginId)
             modified = true
