@@ -69,12 +69,38 @@ abstract class RunNestedBuild : BaseTask() {
 
         params.systemPropertiesArgs[PAPERWEIGHT_DEBUG] = System.getProperty(PAPERWEIGHT_DEBUG, "false")
 
-        NestedRootBuildRunner::class.java.getDeclaredMethod(
-            "runNestedRootBuild",
-            String::class.java,
-            StartParameterInternal::class.java,
-            ServiceRegistry::class.java,
-            ClassPath::class.java
-        ).invoke(null, null, params, services, ClassPath.EMPTY)
+        // Gradle's internal API has changed across versions: the
+        // signature for runNestedRootBuild may be either
+        // (String, StartParameterInternal, ServiceRegistry) or
+        // (String, StartParameterInternal, ServiceRegistry, ClassPath).
+        // Try to find a matching overload and invoke it so the plugin
+        // works across multiple Gradle versions.
+        val runnerClass = NestedRootBuildRunner::class.java
+        val methods = runnerClass.declaredMethods.filter { it.name == "runNestedRootBuild" }
+
+        val method = methods.find { m ->
+            val paramsTypes = m.parameterTypes
+            paramsTypes.size == 3 &&
+                paramsTypes[0] == String::class.java &&
+                paramsTypes[1] == StartParameterInternal::class.java &&
+                paramsTypes[2] == ServiceRegistry::class.java
+        } ?: methods.find { m ->
+            val paramsTypes = m.parameterTypes
+            paramsTypes.size == 4 &&
+                paramsTypes[0] == String::class.java &&
+                paramsTypes[1] == StartParameterInternal::class.java &&
+                paramsTypes[2] == ServiceRegistry::class.java &&
+                paramsTypes[3] == ClassPath::class.java
+        }
+
+        if (method == null) {
+            throw NoSuchMethodException("Could not find a compatible runNestedRootBuild method on NestedRootBuildRunner")
+        }
+
+        if (method.parameterTypes.size == 3) {
+            method.invoke(null, null, params, services)
+        } else {
+            method.invoke(null, null, params, services, ClassPath.EMPTY)
+        }
     }
 }
