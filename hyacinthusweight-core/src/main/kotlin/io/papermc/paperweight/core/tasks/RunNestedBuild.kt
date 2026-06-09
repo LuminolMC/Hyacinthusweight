@@ -78,29 +78,35 @@ abstract class RunNestedBuild : BaseTask() {
         val runnerClass = NestedRootBuildRunner::class.java
         val methods = runnerClass.declaredMethods.filter { it.name == "runNestedRootBuild" }
 
+        // The exact parameter types for runNestedRootBuild have changed across
+        // Gradle versions (StartParameterInternal vs StartParameter, ClassPath may
+        // be present or not). Instead of strict type equality check, match by
+        // parameter count and by simple name to be more resilient across Gradle
+        // versions.
         val method = methods.find { m ->
             val paramsTypes = m.parameterTypes
-            paramsTypes.size == 3 &&
+            if (paramsTypes.size == 3) {
                 paramsTypes[0] == String::class.java &&
-                paramsTypes[1] == StartParameterInternal::class.java &&
-                paramsTypes[2] == ServiceRegistry::class.java
-        } ?: methods.find { m ->
-            val paramsTypes = m.parameterTypes
-            paramsTypes.size == 4 &&
+                    paramsTypes[2] == ServiceRegistry::class.java &&
+                    paramsTypes[1].simpleName.contains("StartParameter")
+            } else if (paramsTypes.size == 4) {
                 paramsTypes[0] == String::class.java &&
-                paramsTypes[1] == StartParameterInternal::class.java &&
-                paramsTypes[2] == ServiceRegistry::class.java &&
-                paramsTypes[3] == ClassPath::class.java
+                    paramsTypes[2] == ServiceRegistry::class.java &&
+                    paramsTypes[1].simpleName.contains("StartParameter") &&
+                    paramsTypes[3].simpleName.contains("ClassPath")
+            } else {
+                false
+            }
         }
 
         if (method == null) {
             throw NoSuchMethodException("Could not find a compatible runNestedRootBuild method on NestedRootBuildRunner")
         }
 
-        if (method.parameterTypes.size == 3) {
-            method.invoke(null, null, params, services)
-        } else {
-            method.invoke(null, null, params, services, ClassPath.EMPTY)
+        when (method.parameterTypes.size) {
+            3 -> method.invoke(null, null, params, services)
+            4 -> method.invoke(null, null, params, services, ClassPath.EMPTY)
+            else -> throw NoSuchMethodException("Unsupported runNestedRootBuild parameter count: ${method.parameterTypes.size}")
         }
     }
 }
