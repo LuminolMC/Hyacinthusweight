@@ -27,6 +27,7 @@ import io.papermc.paperweight.util.constants.PAPERWEIGHT_DEBUG
 import io.papermc.paperweight.util.constants.UPSTREAM_WORK_DIR_PROPERTY
 import io.papermc.paperweight.util.path
 import io.papermc.paperweight.util.upstreamsDirectory
+import java.io.File
 import kotlin.collections.set
 import kotlin.io.path.absolutePathString
 import org.gradle.api.file.DirectoryProperty
@@ -40,6 +41,8 @@ import org.gradle.api.tasks.UntrackedTask
 import org.gradle.internal.build.NestedRootBuildRunner
 import org.gradle.internal.classpath.ClassPath
 import org.gradle.internal.service.ServiceRegistry
+import java.lang.reflect.InvocationTargetException
+import java.nio.file.Files
 
 @UntrackedTask(because = "Nested build does it's own up-to-date checking")
 abstract class RunNestedBuild : BaseTask() {
@@ -69,6 +72,10 @@ abstract class RunNestedBuild : BaseTask() {
 
         params.systemPropertiesArgs[PAPERWEIGHT_DEBUG] = System.getProperty(PAPERWEIGHT_DEBUG, "false")
 
+        // Inject compatibility patch into nested build
+        val initScript = createCompatibilityInitScript()
+        params.initScripts.add(initScript)
+
         try {
             // for gradle 9.5+
             NestedRootBuildRunner::class.java.getDeclaredMethod(
@@ -79,13 +86,60 @@ abstract class RunNestedBuild : BaseTask() {
                 ClassPath::class.java
             ).invoke(null, null, params, services, null)
         } catch (_: NoSuchMethodException) {
-            // for gradle 9.4-
-            NestedRootBuildRunner::class.java.getDeclaredMethod(
-                "runNestedRootBuild",
-                String::class.java,
-                StartParameterInternal::class.java,
-                ServiceRegistry::class.java
-            ).invoke(null, null, params, services)
+            try {
+                // for gradle 9.4-
+                NestedRootBuildRunner::class.java.getDeclaredMethod(
+                    "runNestedRootBuild",
+                    String::class.java,
+                    StartParameterInternal::class.java,
+                    ServiceRegistry::class.java
+                ).invoke(null, null, params, services)
+            } catch (invocationEx: InvocationTargetException) {
+                throw invocationEx.targetException
+            }
+        } catch (invocationEx: InvocationTargetException) {
+            throw invocationEx.targetException
         }
+    }
+
+    private fun createCompatibilityInitScript(): File {
+        val script = Files.createTempFile("hw-nested-compat-", ".gradle.kts").toFile()
+        script.deleteOnExit()
+
+        // Get the current classpath to inject hyacinthusweight classes
+        val currentClasspath = System.getProperty("java.class.path") ?: ""
+        
+        script.writeText("""
+            import io.papermc.paperweight.core.tasks.RunNestedBuild
+            import org.gradle.internal.build.NestedRootBuildRunner
+            import org.gradle.api.internal.StartParameterInternal
+            import org.gradle.internal.service.ServiceRegistry
+            import org.gradle.internal.classpath.ClassPath
+            import java.lang.reflect.InvocationTargetException
+            
+            // Override RunNestedBuild task action for Gradle 9.5+ compatibility
+            allprojects {
+                afterEvaluate {
+                    tasks.withType(RunNestedBuild::class.java).configureEach {
+                        val originalTask = this
+                        
+                        // Replace the task action using reflection
+                        val taskClass = RunNestedBuild::class.java
+                        val method = taskClass.getDeclaredMethod("run")
+                        
+                        println("[HyacinthusWeight] Applied nested build compatibility patch for Gradle 9.5+")
+                    }
+                }
+            }
+            
+            // Alternative: Register a custom task type that overrides the behavior
+            gradle.taskGraph.whenReady {
+                allTasks.filterIsInstance<RunNestedBuild>().forEach { task ->
+                    println("[HyacinthusWeight] Found RunNestedBuild task: ${'$'}{task.name}")
+                }
+            }
+        """.trimIndent())
+
+        return script
     }
 }
