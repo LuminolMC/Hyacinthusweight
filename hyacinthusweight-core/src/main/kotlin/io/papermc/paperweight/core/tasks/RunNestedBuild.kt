@@ -27,9 +27,10 @@ import io.papermc.paperweight.util.constants.PAPERWEIGHT_DEBUG
 import io.papermc.paperweight.util.constants.UPSTREAM_WORK_DIR_PROPERTY
 import io.papermc.paperweight.util.path
 import io.papermc.paperweight.util.upstreamsDirectory
-import java.io.File
 import kotlin.collections.set
 import kotlin.io.path.absolutePathString
+import java.io.File
+import org.gradle.StartParameter
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.internal.StartParameterInternal
 import org.gradle.api.provider.SetProperty
@@ -41,8 +42,6 @@ import org.gradle.api.tasks.UntrackedTask
 import org.gradle.internal.build.NestedRootBuildRunner
 import org.gradle.internal.classpath.ClassPath
 import org.gradle.internal.service.ServiceRegistry
-import java.lang.reflect.InvocationTargetException
-import java.nio.file.Files
 
 @UntrackedTask(because = "Nested build does it's own up-to-date checking")
 abstract class RunNestedBuild : BaseTask() {
@@ -72,74 +71,51 @@ abstract class RunNestedBuild : BaseTask() {
 
         params.systemPropertiesArgs[PAPERWEIGHT_DEBUG] = System.getProperty(PAPERWEIGHT_DEBUG, "false")
 
-        // Inject compatibility patch into nested build
-        val initScript = createCompatibilityInitScript()
-        params.initScripts.add(initScript)
-
         try {
-            // for gradle 9.5+
-            NestedRootBuildRunner::class.java.getDeclaredMethod(
-                "runNestedRootBuild",
-                String::class.java,
-                StartParameterInternal::class.java,
-                ServiceRegistry::class.java,
-                ClassPath::class.java
-            ).invoke(null, null, params, services, null)
+            runTask(params)
         } catch (_: NoSuchMethodException) {
             try {
-                // for gradle 9.4-
-                NestedRootBuildRunner::class.java.getDeclaredMethod(
-                    "runNestedRootBuild",
-                    String::class.java,
-                    StartParameterInternal::class.java,
-                    ServiceRegistry::class.java
-                ).invoke(null, null, params, services)
-            } catch (invocationEx: InvocationTargetException) {
-                throw invocationEx.targetException
+                params.projectDir?.let { modifyDownstreamSettings(it) }
+            } catch (e: Exception) {
+                logger.warn("Failed to modify downstream settings: ${e.message}")
             }
-        } catch (invocationEx: InvocationTargetException) {
-            throw invocationEx.targetException
         }
     }
 
-    private fun createCompatibilityInitScript(): File {
-        val script = Files.createTempFile("hw-nested-compat-", ".gradle.kts").toFile()
-        script.deleteOnExit()
+    fun runTask(params: StartParameter) {
+        NestedRootBuildRunner::class.java.getDeclaredMethod(
+            "runNestedRootBuild",
+            String::class.java,
+            StartParameterInternal::class.java,
+            ServiceRegistry::class.java,
+            ClassPath::class.java
+        ).invoke(null, null, params, services, null)
+    }
 
-        // Get the current classpath to inject hyacinthusweight classes
-        val currentClasspath = System.getProperty("java.class.path") ?: ""
-        
-        script.writeText("""
-            import io.papermc.paperweight.core.tasks.RunNestedBuild
-            import org.gradle.internal.build.NestedRootBuildRunner
-            import org.gradle.api.internal.StartParameterInternal
-            import org.gradle.internal.service.ServiceRegistry
-            import org.gradle.internal.classpath.ClassPath
-            import java.lang.reflect.InvocationTargetException
-            
-            // Override RunNestedBuild task action for Gradle 9.5+ compatibility
-            allprojects {
-                afterEvaluate {
-                    tasks.withType(RunNestedBuild::class.java).configureEach {
-                        val originalTask = this
-                        
-                        // Replace the task action using reflection
-                        val taskClass = RunNestedBuild::class.java
-                        val method = taskClass.getDeclaredMethod("run")
-                        
-                        println("[HyacinthusWeight] Applied nested build compatibility patch for Gradle 9.5+")
-                    }
-                }
-            }
-            
-            // Alternative: Register a custom task type that overrides the behavior
-            gradle.taskGraph.whenReady {
-                allTasks.filterIsInstance<RunNestedBuild>().forEach { task ->
-                    println("[HyacinthusWeight] Found RunNestedBuild task: ${'$'}{task.name}")
-                }
-            }
-        """.trimIndent())
+    private fun modifyDownstreamSettings(projectDir: File) {
+        val buildFile = File(projectDir, "build.gradle.kts")
+        if (!buildFile.exists()) {
+            return
+        }
 
-        return script
+        var content = buildFile.readText()
+
+        val oldPluginId = """id\(["']io\.papermc\.paperweight\.patcher["']\)\s+version\s+["'][^"']+["']"""
+        val currentVersion = project.version.toString()
+        val newPluginId = """id("moe.luminolmc.hyacinthusweight.patcher") version "$currentVersion""""
+
+        if (content.contains(Regex(oldPluginId))) {
+            content = content.replace(Regex(oldPluginId), newPluginId)
+
+            val repositoriesMatch = Regex("""repositories\s*\{""").find(content)
+            if (repositoriesMatch != null && !content.contains("repo.menthamc.org")) {
+                content = content.substring(0, repositoriesMatch.range.last + 1) +
+                    "\n        maven(\"https://repo.menthamc.org/repository/maven-public/\")" +
+                    content.substring(repositoriesMatch.range.last + 1)
+            }
+
+            buildFile.writeText(content)
+            logger.lifecycle("Modified downstream build.gradle.kts to use hyacinthusweight patcher plugin version $currentVersion")
+        }
     }
 }
