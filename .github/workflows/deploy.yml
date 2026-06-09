@@ -23,7 +23,7 @@ jobs:
           java-version: 25
       - name: Publish to repo
         if: github.event_name != 'pull_request'
-        run: ./gradlew publish --no-daemon --stacktrace --no-configuration-cache --no-build-cache
+        run: ./gradlew publish --no-daemon --stacktrace --no-configuration-cache
         env:
           PRIVATE_MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_USERNAME }}
           PRIVATE_MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
