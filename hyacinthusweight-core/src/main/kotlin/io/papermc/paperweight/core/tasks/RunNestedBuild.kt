@@ -79,6 +79,7 @@ abstract class RunNestedBuild : BaseTask() {
             } catch (e: Exception) {
                 logger.warn("Failed to modify downstream settings: ${e.message}")
             }
+            runTask(params)
         }
     }
 
@@ -100,13 +101,33 @@ abstract class RunNestedBuild : BaseTask() {
 
         var content = buildFile.readText()
 
-        val oldPluginId = """id\(["']io\.papermc\.paperweight\.patcher["']\)\s+version\s+["'][^"']+["']"""
         val currentVersion = project.version.toString()
-        val newPluginId = """id("moe.luminolmc.hyacinthusweight.patcher") version "$currentVersion""""
+        
+        val oldPatcherPluginId = """id\(["']io\.papermc\.paperweight\.patcher["']\)\s+version\s+["'][^"']+["']"""
+        val newPatcherPluginId = """id("moe.luminolmc.hyacinthusweight.patcher") version "$currentVersion""""
 
-        if (content.contains(Regex(oldPluginId))) {
-            content = content.replace(Regex(oldPluginId), newPluginId)
+        val oldCorePluginId = """id\(["']io\.papermc\.paperweight\.core["']\)\s+version\s+["'][^"']+["']"""
+        val newCorePluginId = """id("moe.luminolmc.hyacinthusweight.core") version "$currentVersion""""
 
+        var modified = false
+        
+        if (content.contains(Regex(oldPatcherPluginId))) {
+            content = content.replace(Regex(oldPatcherPluginId), newPatcherPluginId)
+            modified = true
+        }
+
+        if (content.contains(Regex(oldCorePluginId))) {
+            content = content.replace(Regex(oldCorePluginId), newCorePluginId)
+            modified = true
+        }
+
+        val weightVersionPattern = """version\s+weightVersion"""
+        if (content.contains(Regex(weightVersionPattern))) {
+            content = content.replace(Regex(weightVersionPattern), """version "$currentVersion"""")
+            modified = true
+        }
+
+        if (modified) {
             val repositoriesMatch = Regex("""repositories\s*\{""").find(content)
             if (repositoriesMatch != null && !content.contains("repo.menthamc.org")) {
                 content = content.substring(0, repositoriesMatch.range.last + 1) +
@@ -115,7 +136,7 @@ abstract class RunNestedBuild : BaseTask() {
             }
 
             buildFile.writeText(content)
-            logger.lifecycle("Modified downstream build.gradle.kts to use hyacinthusweight patcher plugin version $currentVersion")
+            logger.lifecycle("Modified downstream build.gradle.kts to use hyacinthusweight plugins version $currentVersion")
         }
     }
 }
