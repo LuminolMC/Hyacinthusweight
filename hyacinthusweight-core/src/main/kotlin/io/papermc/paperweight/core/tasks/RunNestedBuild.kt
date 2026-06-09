@@ -69,63 +69,23 @@ abstract class RunNestedBuild : BaseTask() {
 
         params.systemPropertiesArgs[PAPERWEIGHT_DEBUG] = System.getProperty(PAPERWEIGHT_DEBUG, "false")
 
-        val runnerClass = NestedRootBuildRunner::class.java
-        val methods = runnerClass.declaredMethods.filter { it.name == "runNestedRootBuild" }
-
-        if (methods.isEmpty()) {
-            throw IllegalStateException("No runNestedRootBuild method found in NestedRootBuildRunner")
-        }
-
-        val method = methods.find { m ->
-            val paramTypes = m.parameterTypes
-            
-            paramTypes.size >= 3 && 
-                paramTypes[0] == String::class.java &&
-                paramTypes.last() != null &&
-                paramTypes.any { it.simpleName.contains("StartParameter") }
-        }
-
-        if (method == null) {
-            val availableSignatures = methods.joinToString("\n") { m ->
-                "${m.name}(${m.parameterTypes.joinToString(", ") { it.name }})"
-            }
-            throw NoSuchMethodException(
-                "Could not find a compatible runNestedRootBuild method on NestedRootBuildRunner.\n" +
-                "Current Gradle version: ${org.gradle.util.GradleVersion.current().version}\n" +
-                "Available methods:\n$availableSignatures"
-            )
-        }
-
         try {
-            val args = mutableListOf<Any?>()
-            args.add(null)
-            
-            when (method.parameterTypes.size) {
-                3 -> {
-                    args.add(params)
-                    args.add(services)
-                }
-                4 -> {
-                    args.add(params)
-                    args.add(services)
-                    args.add(ClassPath.EMPTY)
-                }
-                else -> {
-                    for (i in 1 until method.parameterTypes.size) {
-                        val paramType = method.parameterTypes[i]
-                        when {
-                            paramType.simpleName.contains("StartParameter") -> args.add(params)
-                            paramType == ServiceRegistry::class.java -> args.add(services)
-                            paramType.simpleName.contains("ClassPath") -> args.add(ClassPath.EMPTY)
-                            else -> args.add(null)
-                        }
-                    }
-                }
-            }
-            
-            method.invoke(null, *args.toTypedArray())
-        } catch (e: Exception) {
-            throw RuntimeException("Failed to invoke runNestedRootBuild: ${e.message}", e)
+            // for gradle 9.5+
+            NestedRootBuildRunner::class.java.getDeclaredMethod(
+                "runNestedRootBuild",
+                String::class.java,
+                StartParameterInternal::class.java,
+                ServiceRegistry::class.java,
+                ClassPath::class.java
+            ).invoke(null, null, params, services, null)
+        } catch (_: NoSuchMethodException) {
+            // for gradle 9.4-
+            NestedRootBuildRunner::class.java.getDeclaredMethod(
+                "runNestedRootBuild",
+                String::class.java,
+                StartParameterInternal::class.java,
+                ServiceRegistry::class.java
+            ).invoke(null, null, params, services)
         }
     }
 }
